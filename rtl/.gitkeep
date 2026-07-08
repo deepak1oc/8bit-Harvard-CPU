@@ -1,0 +1,134 @@
+`timescale 1ns / 1ps
+// === ALU ===
+module alu8(input [3:0] op, input [7:0] a, b, output reg [7:0] y, output zf, cf, nf);
+  reg c;
+  always @(*) begin
+    c = 0;
+    case (op)
+      4'h0: {c, y} = a + b;
+      4'h1: {c, y} = a - b;
+      4'h2: y = a & b;
+      4'h3: y = a | b;
+      4'h4: y = a ^ b;
+      4'h5: y = a << 1;
+      4'h6: y = a >> 1;
+      4'h7: y = (a == b) ? 8'h01 : 8'h00;
+      default: y = 8'h00;
+    endcase
+  end
+  assign zf = (y == 0);
+  assign cf = c;
+  assign nf = y[7];
+endmodule
+
+// === Program Counter ===
+module pc_unit(input clk, rst, en, input [7:0] next, output reg [7:0] pc);
+  always @(posedge clk or posedge rst)
+    pc <= rst ? 0 : en ? next : pc;
+endmodule
+
+// === Register File ===
+module regfile8(input clk, wr, rst, input [2:0] rd, rs, input [7:0] din, output reg [7:0] a, b);
+  reg [7:0] r[7:0];
+  integer i;
+  always @(*) begin
+    a = r[rd];
+    b = r[rs];
+  end
+  always @(posedge clk or posedge rst) begin
+    if (rst)
+      for (i = 0; i < 8; i = i + 1)
+        r[i] <= 8'h00;
+    else if (wr)
+      r[rd] <= din;
+  end
+endmodule
+
+// === Instruction Memory ===
+module imem_rom(input [7:0] addr, output [15:0] instr);
+  reg [15:0] mem[255:0];
+  assign instr = mem[addr];
+  initial begin
+    mem[0] = 16'h8201; // LOAD R2, [01]
+    mem[1] = 16'h8A02; // LOAD R5, [02]
+    mem[2] = 16'h0245; // ADD R2, R5
+    mem[3] = 16'h1245; // SUB R2, R5
+    mem[4] = 16'h2245; // AND R2, R5
+    mem[5] = 16'h3245; // OR  R2, R5
+    mem[6] = 16'h4245; // XOR R2, R5
+    mem[7] = 16'h5240; // SHL R2
+    mem[8] = 16'h6240; // SHR R2
+    mem[9] = 16'h7245; // EQ  R2, R5
+    mem[10] = 16'hB200; // STORE R2, [00]
+    mem[11] = 16'hF000; // HALT
+  end
+endmodule
+
+// === Data Memory ===
+module dmem_ram(input clk, wr, input [7:0] addr, din, output [7:0] dout);
+  reg [7:0] mem[255:0];
+  integer i;
+  assign dout = mem[addr];
+  always @(posedge clk)
+    if (wr) mem[addr] <= din;
+  initial begin
+    for (i = 0; i < 256; i = i + 1)
+      mem[i] = 8'h00;
+    mem[1] = 8'h0F; // preload for R2
+    mem[2] = 8'h03; // preload for R5
+  end
+endmodule
+
+// === CPU Top Module ===
+module cpu8(
+  input clk, rst,
+  output [7:0] pc, next, a, b, y, dout, imm, wdata,
+  output [15:0] instr,
+  output [3:0] op,
+  output [2:0] rd, rs,
+  output wr, mem_wr, pc_en,
+  output zf, cf, nf
+);
+  wire [7:0] pc_i, next_i, a_i, b_i, y_i, dout_i, imm_i, wdata_i;
+  wire [15:0] instr_i;
+  wire [3:0] op_i;
+  wire [2:0] rd_i, rs_i;
+  wire wr_i, mem_wr_i, pc_en_i;
+  wire zf_i, cf_i, nf_i;
+
+  assign next_i = pc_i + 1;
+  assign op_i = instr_i[15:12];
+  assign rd_i = instr_i[11:9];
+  assign rs_i = instr_i[8:6];
+  assign imm_i = instr_i[7:0];
+  assign wr_i = (op_i == 4'h0) || (op_i == 4'h1) || (op_i == 4'h8) || (op_i == 4'hA);
+  assign mem_wr_i = (op_i == 4'hB);
+  assign pc_en_i = (op_i != 4'hF);
+  assign wdata_i = (op_i == 4'hA) ? dout_i : y_i;
+
+  pc_unit p(clk, rst, pc_en_i, next_i, pc_i);
+  imem_rom im(pc_i, instr_i);
+  regfile8 rf(clk, wr_i, rst, rd_i, rs_i, wdata_i, a_i, b_i);
+  alu8 alu(op_i, a_i, b_i, y_i, zf_i, cf_i, nf_i);
+  dmem_ram dm(clk, mem_wr_i, imm_i, a_i, dout_i);
+
+  assign pc = pc_i;
+  assign next = next_i;
+  assign a = a_i;
+  assign b = b_i;
+  assign y = y_i;
+  assign dout = dout_i;
+  assign imm = imm_i;
+  assign wdata = wdata_i;
+  assign instr = instr_i;
+  assign op = op_i;
+  assign rd = rd_i;
+  assign rs = rs_i;
+  assign wr = wr_i;
+  assign mem_wr = mem_wr_i;
+  assign pc_en = pc_en_i;
+  assign zf = zf_i;
+  assign cf = cf_i;
+  assign nf = nf_i;
+endmodule
+
